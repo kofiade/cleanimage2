@@ -1,4 +1,3 @@
-# .github/workflows/image-assessment.yml
 name: CrowdStrike Image Assessment
 
 on:
@@ -7,22 +6,17 @@ on:
   pull_request:
     branches: [main]
 
-# =========================================================================
-# REPOSITORY-SPECIFIC SECTION — Change these values for each repository
-# =========================================================================
 env:
-  IMAGE_NAME: myapp          # <-- Change: your container image name
+  IMAGE_NAME: myapp
   IMAGE_TAG: ${{ github.sha }}
-  FALCON_REGION: us-2        # <-- Change: your CrowdStrike region (us-1, us-2, eu-1, us-gov-1, us-gov-2)
-  DOCKERFILE_PATH: .         # <-- Change: path to your Dockerfile context
-# =========================================================================
+  FALCON_REGION: us-2
+  DOCKERFILE_PATH: .
 
 jobs:
   build-and-assess:
     name: Build & Scan Image
     runs-on: ubuntu-latest
 
-    # Required for uploading SARIF to GitHub Security tab
     permissions:
       security-events: write
       contents: read
@@ -44,16 +38,34 @@ jobs:
           scan_type: image
           image: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
           minimum_severity: high
-          upload_results: true              # Upload results to Falcon Console
-          report_formats: sarif             # SARIF format for GitHub Security
+          upload_results: true
+          report_formats: sarif
           output_path: ./scan-results.sarif
         env:
           FALCON_CLIENT_SECRET: ${{ secrets.FALCON_CLIENT_SECRET }}
           FCS_VERBOSE: 'true'
 
+      - name: Check whether SARIF has findings
+        id: sarif_check
+        shell: bash
+        run: |
+          if [ ! -f ./scan-results.sarif ]; then
+            echo "has_findings=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          RESULTS_COUNT=$(jq '[.runs[]?.results[]?] | length' ./scan-results.sarif)
+          echo "results_count=$RESULTS_COUNT" >> "$GITHUB_OUTPUT"
+
+          if [ "$RESULTS_COUNT" -gt 0 ]; then
+            echo "has_findings=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_findings=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Upload SARIF to GitHub Security
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        if: steps.sarif_check.outputs.has_findings == 'true'
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ./scan-results.sarif
 
